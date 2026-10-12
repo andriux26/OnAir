@@ -264,6 +264,8 @@ private:
         stream_ = nullptr;
         try { if (dev_) SoapySDR::Device::unmake(dev_); } catch (...) {}
         dev_ = nullptr;
+        rfTuneSet_ = false;
+        gainSet_ = false;
     }
 
     bool apply(const TuneSettings& s, std::string& err, bool live) {
@@ -315,7 +317,14 @@ private:
         // SpyServer exposes a named RF frequency. Check the server's reported tuning
         // rather than assuming that setFrequency succeeded (some sessions are read-only).
         if (args_.find("driver=spyserver") != std::string::npos) {
-            dev_->setFrequency(SOAPY_SDR_RX, ch, "RF", tuneHz);
+            // Only send an RF command when the requested frequency really changes.
+            // A gain/PPM/UI refresh must not cause an unnecessary network round trip
+            // or an audio gap. Update the cache only after the driver accepted it.
+            if (!rfTuneSet_ || std::fabs(tuneHz - lastRfTuneHz_) >= 0.5) {
+                dev_->setFrequency(SOAPY_SDR_RX, ch, "RF", tuneHz);
+                lastRfTuneHz_ = tuneHz;
+                rfTuneSet_ = true;
+            }
             // During live retunes, avoid a blocking SpyServer sync/readback. The
             // server can report its earlier frequency even when the IQ stream
             // has already changed; it also introduces a noticeable audio gap.
@@ -381,6 +390,8 @@ private:
     double ppm_ = 0;           // the correction set in the driver
     double lastGainDb_ = 0;
     bool gainSet_ = false;
+    bool rfTuneSet_ = false;
+    double lastRfTuneHz_ = 0;
     std::map<std::string, std::string> current_;   // "soapy.<key>" -> the value the radio has
     std::vector<std::string> boolKeys_;            // the ones of them that are BOOL
     SoapySDR::Device* dev_ = nullptr;
