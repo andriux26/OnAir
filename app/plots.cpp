@@ -5,6 +5,7 @@
 static void clickToTune(App& a, int plotId) {
     if (a.family == 55) { generalPlotMouse(a, plotId); return; }   // the general receiver: its channel marker, without retuning the radio
     if (!plt::IsPlotHovered() || a.fmScan.running) return;
+    if (a.manualRfBandwidthHz > 0 && ImGui::IsMouseDragging(0)) return;
     double mhz = plt::GetPlotMousePos().x;
     double lo = 0.1, hi = 6000;
     double grid = 0.001;
@@ -46,6 +47,11 @@ ChanWidth channelWidth(const App& a) {
     else if (a.family == 6 && a.engine.running() && a.rx.standard == 7 && a.rx.dvbs.symbolRate > 0) w.mhz = a.rx.dvbs.symbolRate * (1 + a.rx.dvbs.rollOff) / 1e6;
     else if (a.family == 55) w.mhz = generalChannelWidthMhz(a);
     else if (const ModeTuning* mt = modeTuning(a.family + 2)) w.mhz = mt->bandwidthMhz;
+    // An explicitly dragged RF passband is drawn irrespective of mode presets.
+    if (a.manualRfBandwidthHz > 0 && a.family != 55) {
+        w.mhz = a.manualRfBandwidthHz / 1e6;
+        w.manual = w.settable = true;
+    }
     return w;
 }
 
@@ -110,12 +116,63 @@ void channelWidthPopup(App& a) {
     ImGui::PopTextWrapPos();
 }
 
+// Drag either edge of the channel overlay: preview locally while the mouse is held,
+// then issue ONE driver retune when released (SpyServer may be on a slow network).
+// Band stays centred on the tuned frequency. This changes the radio front-end
+// filter request, not the protocol's fixed symbol rate or decoder filter.
+static int gBandDragPlot = -1;
+static double gBandDragWidthMhz = 0;
+static int gBandDragSide = 0;
+static float gBandStartMouseX = 0;
+static double gBandStartWidthMhz = 0;
+static void dragBandEdge(App& a, int plotId) {
+    if (a.family == 55 || a.fmScan.running || a.devices.empty()) return;
+    const ChanWidth cw = channelWidth(a);
+    if (cw.mhz <= 0) return;
+    const plt::Rect lim = plt::GetPlotLimits();
+    const ImVec2 origin = plt::GetPlotPos(), size = plt::GetPlotSize();
+    const double span = lim.X.Max - lim.X.Min;
+    if (span <= 0 || size.x <= 0) return;
+    const auto pixel = [&](double mhz) { return origin.x + float((mhz - lim.X.Min) / span * size.x); };
+    const float left = pixel(a.freqMhz - cw.mhz / 2), right = pixel(a.freqMhz + cw.mhz / 2);
+    const float mx = ImGui::GetIO().MousePos.x;
+    const bool hover = plt::IsPlotHovered();
+    const bool nearLeft = std::fabs(mx - left) <= 9 * gUi;
+    const bool nearRight = std::fabs(mx - right) <= 9 * gUi;
+    if (gBandDragPlot == -1 && hover && (nearLeft || nearRight)) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (ImGui::IsMouseClicked(0)) {
+            gBandDragPlot = plotId;
+            gBandDragSide = nearLeft ? -1 : 1;
+            gBandStartMouseX = mx;
+            gBandStartWidthMhz = cw.mhz;
+            gBandDragWidthMhz = cw.mhz;
+        }
+    }
+    if (gBandDragPlot != plotId) return;
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    const double dx = (mx - gBandStartMouseX) / size.x * span;
+    const double rate = a.engine.running() ? a.engine.sampleRate() : a.tune.sampleRate;
+    const double maxMhz = rate > 0 ? rate / 1e6 : span;
+    gBandDragWidthMhz = std::max(0.005, std::min(maxMhz, gBandStartWidthMhz + 2 * gBandDragSide * dx));
+    if (ImGui::IsMouseReleased(0)) {
+        gBandDragPlot = -1;
+        if (std::fabs(gBandDragWidthMhz - gBandStartWidthMhz) > 1e-6) {
+            a.manualRfBandwidthHz = gBandDragWidthMhz * 1e6;
+            a.tune.basebandFilterHz = a.manualRfBandwidthHz;
+            if (a.engine.running()) a.engine.retune(a.tune);
+            savePrefs(a);
+        }
+    }
+}
+
 // The channel band behind the trace (spectrum: a light fill and its edges) or on top of the picture (waterfall: the edges only)
 static void channelBand(const App& a, bool fill) {
     if (a.family == 55) { generalChannelBand(a, fill); return; }
     const ChanWidth cw = channelWidth(a);
     if (cw.mhz <= 0) return;
-    const double x0 = a.freqMhz - cw.mhz / 2, x1 = a.freqMhz + cw.mhz / 2;
+    const double shownWidth = gBandDragPlot >= 0 ? gBandDragWidthMhz : cw.mhz;
+    const double x0 = a.freqMhz - shownWidth / 2, x1 = a.freqMhz + shownWidth / 2;
     if (fill) { plt::Spec band; band.FillColor = pal::accent(pal::dev() ? 0.14f : 0.16f); plt::PlotVBand("band", x0, x1, band); }
     const double edges[2] = {x0, x1};
     plt::Spec es; es.LineColor = pal::accent(fill ? 0.40f : 0.55f); es.LineWeight = 1.f;
@@ -152,7 +209,7 @@ void spectrumPlot(App& a, ImVec2 size, bool noFreqAxis) {
     ImVec2 plotMin, plotSize;
     bool drawn = false, openCtx = false;
     static double ctxMhz = 0;
-    if (plt::BeginPlot("##spec", size, plt::Flags_NoLegend | plt::Flags_NoTitle | plt::Flags_Overlay | (a.family == 55 && generalDragging(0) ? plt::Flags_NoPan : 0))) {
+    if (plt::BeginPlot("##spec", size, plt::Flags_NoLegend | plt::Flags_NoTitle | plt::Flags_Overlay | ((a.family == 55 && generalDragging(0)) || gBandDragPlot == 0 ? plt::Flags_NoPan : 0))) {
         drawn = true;
         if (noFreqAxis) plt::SetupAxes(nullptr, kYLabel, plt::AxisFlags_NoTickLabels, 0);   // the waterfall under it shows the frequencies
         else plt::SetupAxes("frequency (MHz)", kYLabel);
@@ -194,7 +251,8 @@ void spectrumPlot(App& a, ImVec2 size, bool noFreqAxis) {
                 }
             }
         }
-        clickToTune(a, 0);
+        dragBandEdge(a, 0);
+        if (gBandDragPlot < 0) clickToTune(a, 0);
         if (plt::IsPlotHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) { ctxMhz = plt::GetPlotMousePos().x; openCtx = true; }
         plt::EndPlot();
     }
@@ -229,7 +287,7 @@ void waterfallPlot(App& a, ImVec2 size) {
             sc.pos.push_back(-s / sc.dt); sc.lab.push_back(b);
         }
     }
-    if (plt::BeginPlot("##wf", size, plt::Flags_NoLegend | plt::Flags_NoTitle | (a.family == 55 && generalDragging(1) ? plt::Flags_NoPan : 0))) {
+    if (plt::BeginPlot("##wf", size, plt::Flags_NoLegend | plt::Flags_NoTitle | ((a.family == 55 && generalDragging(1)) || gBandDragPlot == 1 ? plt::Flags_NoPan : 0))) {
         plt::SetupAxes("frequency (MHz)", "seconds ago");
         double fs = (a.engine.sampleRate() > 0 ? a.engine.sampleRate() : a.tune.sampleRate) / 1e6;
         const double rc = radioCenterMhz(a);
@@ -256,7 +314,8 @@ void waterfallPlot(App& a, ImVec2 size) {
         const float vNew = (w + 0.5f) / H;   // the gap above: the newest row, stretched
         if (frac > 0) plt::PlotImage("top", tex, plt::Point(x0, -frac), plt::Point(x1, 0), ImVec2(0, vNew), ImVec2(1, vNew));
         channelBand(a, false);
-        clickToTune(a, 1);
+        dragBandEdge(a, 1);
+        if (gBandDragPlot < 0) clickToTune(a, 1);
         plt::EndPlot();
     }
 }
