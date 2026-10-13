@@ -221,6 +221,23 @@ void tab(App& a) {
     ImGui::PushTextWrapPos(0);
     ImGui::TextDisabled("Receive only: the public information every TETRA base station broadcasts to all terminals (network code, location area, services, encryption in use). Nothing is decrypted; no voice, messages or identities are decoded.");
     ImGui::PopTextWrapPos();
+    // Make the distinction between RF detection, encryption and voice support explicit.
+    // The current receiver processes public BCCH signalling only; it does not
+    // follow traffic bearers or contain a TETRA ACELP voice decoder.
+    if (live(a)) {
+        int identified = 0, encrypted = 0, unencrypted = 0;
+        for (const auto& cell : a.rx.tetra.cells) {
+            if (!cell.hasSysinfo) continue;
+            ++identified;
+            if (cell.encryption()) ++encrypted;
+            else ++unencrypted;
+        }
+        ImGui::Text("Identified cells: %d | Encryption indicated: %d | No encryption indicated: %d",
+                    identified, encrypted, unencrypted);
+        ImGui::TextDisabled("Voice: not implemented (control-channel scan only; no traffic or speech decoding).");
+        if (encrypted > 0)
+            ImGui::TextDisabled("Encrypted cells cannot be listened to as intelligible speech without authorised network access.");
+    }
     subNav("tetrav", S.view, {"Cells", "Neighbours", "Carriers", "Log"});
     if (!live(a)) { ImGui::TextDisabled("%s", a.engine.running() ? "starting" : "start the receiver to find the TETRA base stations around you"); return; }
     if (S.view == 0) {
