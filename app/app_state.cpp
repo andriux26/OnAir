@@ -46,7 +46,7 @@ static void setFamilyFlags(App& a, int f) {
     a.family = f; a.atscMode = f == 1 || f == 3 || f == 4; a.atsc3Mode = f == 3; a.isdbtMode = f == 4; a.dabMode = f == 2; a.fmMode = f == 5;
     if (f >= 6) {   // a mode added after FM: its tuning table says what is a sensible frequency
         const ModeTuning* mt = modeTuning(f + 2);
-        if (mt && !(a.freqMhz >= mt->minMhz && a.freqMhz <= mt->maxMhz)) a.freqMhz = mt->defMhz;
+        if (mt && !a.freeFrequency && !(a.freqMhz >= mt->minMhz && a.freqMhz <= mt->maxMhz)) a.freqMhz = mt->defMhz;
     }
     scanRaster(a, f);
     nameSynth(a);
@@ -102,14 +102,14 @@ void setMode(App& a, int f, int sub) {
         const ModeTuning* mt = modeTuning(f + 2);
         const SubMode* sm = curSub(a);
         const double def = sm ? sm->defMhz : mt ? mt->defMhz : a.freqMhz;
-        a.freqMhz = mt && a.famFreq[to] >= mt->minMhz && a.famFreq[to] <= mt->maxMhz ? a.famFreq[to] : def;
+        a.freqMhz = a.famFreq[to] > 0 && (a.freeFrequency || !mt || (a.famFreq[to] >= mt->minMhz && a.famFreq[to] <= mt->maxMhz)) ? a.famFreq[to] : def;
     }
-    if (f == 0 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 522.0;       // a TV channel, not a leftover FM or DAB frequency
-    if (f == 1 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 473.0;
-    if (f == 3 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 522.0;
-    if (f == 2 && !(a.freqMhz >= 174 && a.freqMhz <= 240)) a.freqMhz = 218.640;
-    if (f == 4 && !(a.freqMhz >= 170 && a.freqMhz <= 770)) a.freqMhz = 473.143;   // the centre of UHF channel 13/14 of the 6 MHz raster
-    if (f == 5 && !(a.freqMhz >= 87.5 && a.freqMhz <= 108)) a.freqMhz = 100.0;     // FM band, default to 100 MHz
+    if (!a.freeFrequency && f == 0 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 522.0;       // a TV channel, not a leftover FM or DAB frequency
+    if (!a.freeFrequency && f == 1 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 473.0;
+    if (!a.freeFrequency && f == 3 && !(a.freqMhz >= 170 && a.freqMhz <= 870)) a.freqMhz = 522.0;
+    if (!a.freeFrequency && f == 2 && !(a.freqMhz >= 174 && a.freqMhz <= 240)) a.freqMhz = 218.640;
+    if (!a.freeFrequency && f == 4 && !(a.freqMhz >= 170 && a.freqMhz <= 770)) a.freqMhz = 473.143;   // the centre of UHF channel 13/14 of the 6 MHz raster
+    if (!a.freeFrequency && f == 5 && !(a.freqMhz >= 87.5 && a.freqMhz <= 108)) a.freqMhz = 100.0;     // FM band, default to 100 MHz
     nameSynth(a);
 }
 
@@ -326,6 +326,7 @@ std::string saveFileDialog(const char* name) { return plat::saveFileDialog(name)
 void loadPrefs(App& a) {
     plat::Prefs& d = plat::prefs();
     a.netRadios = netRadiosFromString(d.getS("netRadios", ""));
+    a.freeFrequency = d.getB("freeFrequency", false);
     if (d.has("freqMhz")) a.freqMhz = d.getD("freqMhz", a.freqMhz);
     if (d.has("lna")) a.tune.lnaDb = (int)d.getI("lna", a.tune.lnaDb);
     if (d.has("vga")) a.tune.vgaDb = (int)d.getI("vga", a.tune.vgaDb);
@@ -340,7 +341,7 @@ void loadPrefs(App& a) {
         a.family = f;
         if (!curSub(a)) a.sub = firstSubOf(f);
         setFamilyFlags(a, f);
-        if (a.fmMode && !(a.freqMhz >= 87.5 && a.freqMhz <= 108)) a.freqMhz = 100.0;
+        if (!a.freeFrequency && a.fmMode && !(a.freqMhz >= 87.5 && a.freqMhz <= 108)) a.freqMhz = 100.0;
     }
     for (int f = 0; f < kNumSlots; f++) {   // as many as savePrefs writes
         const std::string k = slotKey(f);
@@ -357,7 +358,7 @@ void loadPrefs(App& a) {
     if (const SubMode* sm = curSub(a)) {   // the protocol entry's own frequency
         const ModeTuning* mt = modeTuning(sm->stdMode);
         const double fr = a.famFreq[modeSlot(a)];
-        if (mt && !(a.freqMhz >= mt->minMhz && a.freqMhz <= mt->maxMhz && fr > 0)) a.freqMhz = fr >= mt->minMhz && fr <= mt->maxMhz ? fr : sm->defMhz;
+        if (mt && !(a.freqMhz > 0 && (a.freeFrequency || (a.freqMhz >= mt->minMhz && a.freqMhz <= mt->maxMhz)) && fr > 0)) a.freqMhz = fr > 0 && (a.freeFrequency || (fr >= mt->minMhz && fr <= mt->maxMhz)) ? fr : sm->defMhz;
     }
     if (d.has("newUi")) a.newUi = d.getB("newUi", true);
     a.modeGroupsOpen = d.getS("modeGroupsOpen", "");
@@ -414,6 +415,7 @@ void savePrefs(const App& a) {
     plat::Prefs& d = plat::prefs();
     d.setS("netRadios", netRadiosToString(a.netRadios));
     d.setD("freqMhz", a.freqMhz);
+    d.setB("freeFrequency", a.freeFrequency);
     d.setI("lna", a.tune.lnaDb);
     d.setI("vga", a.tune.vgaDb);
     d.setD("gain", a.tune.gainDb);
