@@ -316,6 +316,7 @@ void applyBandwidth(App& a) {
     }
     // the rate was lowered to the radio's top: a filter meant for the faster rate lets everything up to its edge fold into the band (the
     // 8-9 MHz filters of DTMB, analog TV, DVB-S and Iridium on a PlutoSDR's 4 Msps over USB); the radio's own choice for its rate (0) fits
+    if (a.manualRfBandwidthHz > 0) a.tune.basebandFilterHz = std::min(a.manualRfBandwidthHz, a.tune.sampleRate);
     if (a.tune.basebandFilterHz > a.tune.sampleRate) a.tune.basebandFilterHz = 0;
 }
 
@@ -327,6 +328,7 @@ void loadPrefs(App& a) {
     plat::Prefs& d = plat::prefs();
     a.netRadios = netRadiosFromString(d.getS("netRadios", ""));
     a.freeFrequency = d.getB("freeFrequency", false);
+    a.manualRfBandwidthHz = std::max(0.0, d.getD("manualRfBandwidthHz", 0.0));
     if (d.has("freqMhz")) a.freqMhz = d.getD("freqMhz", a.freqMhz);
     if (d.has("lna")) a.tune.lnaDb = (int)d.getI("lna", a.tune.lnaDb);
     if (d.has("vga")) a.tune.vgaDb = (int)d.getI("vga", a.tune.vgaDb);
@@ -416,6 +418,7 @@ void savePrefs(const App& a) {
     d.setS("netRadios", netRadiosToString(a.netRadios));
     d.setD("freqMhz", a.freqMhz);
     d.setB("freeFrequency", a.freeFrequency);
+    d.setD("manualRfBandwidthHz", a.manualRfBandwidthHz);
     d.setI("lna", a.tune.lnaDb);
     d.setI("vga", a.tune.vgaDb);
     d.setD("gain", a.tune.gainDb);
