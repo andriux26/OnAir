@@ -276,6 +276,7 @@ struct App {
     } fmScan;
     bool bwAuto = true;       // the engine measures the channel width and switches by itself
     double freqMhz = 522.0;
+    double manualRfBandwidthHz = 0; // 0 = automatic per-mode SDR front-end filter
     bool freeFrequency = false;  // allow tuning outside the selected mode's recommended range
     bool autoScroll = true;
     int tab = 0;
