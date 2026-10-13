@@ -51,7 +51,7 @@ ChanWidth channelWidth(const App& a) {
     else if (a.family == 55) w.mhz = generalChannelWidthMhz(a);
     else if (const ModeTuning* mt = modeTuning(a.family + 2)) w.mhz = mt->bandwidthMhz;
     // An explicitly dragged RF passband is drawn irrespective of mode presets.
-    if (a.manualRfBandwidthHz > 0) {
+    if (a.manualRfBandwidthHz > 0 && !a.fmMode && a.family != 55) {
         w.mhz = a.manualRfBandwidthHz / 1e6;
         w.manual = w.settable = true;
     }
@@ -130,7 +130,7 @@ static double gBandStartWidthMhz = 0;
 // Called after EndPlot: the plot's own invisible input item can own the mouse.
 // Use screen geometry instead of IsPlotHovered() so handles work over that item.
 static void dragBandEdge(App& a, int plotId, ImVec2 origin, ImVec2 size, double viewLo, double viewHi) {
-    if (a.fmScan.running || a.devices.empty()) return;
+    if (a.fmScan.running || a.devices.empty() || a.family == 55) return;
     const ChanWidth cw = channelWidth(a);
     const double span = viewHi - viewLo;
     if (cw.mhz <= 0 || !(span > 0) || size.x <= 0 || size.y <= 0) return;
@@ -164,16 +164,22 @@ static void dragBandEdge(App& a, int plotId, ImVec2 origin, ImVec2 size, double 
     ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     const double dx = (mx - gBandStartMouseX) / size.x * span;
     const double rate = a.engine.running() ? a.engine.sampleRate() : a.tune.sampleRate;
-    const double maxMhz = rate > 0 ? rate / 1e6 : span;
-    gBandDragWidthMhz = std::max(0.005, std::min(maxMhz, gBandStartWidthMhz + 2.0 * gBandDragSide * dx));
+    const double maxMhz = a.fmMode ? FmReceiver::kMaxChannelWidthHz / 1e6 : (rate > 0 ? rate / 1e6 : span);
+    const double minMhz = a.fmMode ? FmReceiver::kMinChannelWidthHz / 1e6 : 0.005;
+    gBandDragWidthMhz = std::max(minMhz, std::min(maxMhz, gBandStartWidthMhz + 2.0 * gBandDragSide * dx));
     ImGui::SetTooltip("RF bandwidth: %s (release to apply)", widthText(gBandDragWidthMhz).c_str());
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         gBandDragPlot = -1;
         gBandReleaseConsumed = true;
         if (std::fabs(gBandDragWidthMhz - gBandStartWidthMhz) > 1e-6) {
-            a.manualRfBandwidthHz = gBandDragWidthMhz * 1e6;
-            a.tune.basebandFilterHz = a.manualRfBandwidthHz;
-            if (a.engine.running()) a.engine.retune(a.tune);
+            if (a.fmMode) {
+                a.fmChanKhz = std::max(100, std::min(300, (int)std::lround(gBandDragWidthMhz * 1000)));
+                a.engine.fm().setChannelWidth(a.fmChanKhz * 1e3);
+            } else {
+                a.manualRfBandwidthHz = gBandDragWidthMhz * 1e6;
+                a.tune.basebandFilterHz = a.manualRfBandwidthHz;
+                if (a.engine.running()) a.engine.retune(a.tune);
+            }
             savePrefs(a);
         }
     }
@@ -181,7 +187,7 @@ static void dragBandEdge(App& a, int plotId, ImVec2 origin, ImVec2 size, double 
 
 // The channel band behind the trace (spectrum: a light fill and its edges) or on top of the picture (waterfall: the edges only)
 static void channelBand(const App& a, bool fill) {
-    if (a.family == 55 && a.manualRfBandwidthHz <= 0 && gBandDragPlot < 0) { generalChannelBand(a, fill); return; }
+    if (a.family == 55) { generalChannelBand(a, fill); return; }
     const ChanWidth cw = channelWidth(a);
     if (cw.mhz <= 0) return;
     const double shownWidth = gBandDragPlot >= 0 ? gBandDragWidthMhz : cw.mhz;
@@ -272,7 +278,7 @@ void spectrumPlot(App& a, ImVec2 size, bool noFreqAxis) {
         plt::EndPlot();
     }
     if (drawn) {
-        dragBandEdge(a, 0, plotMin, plotSize, plotLo, plotHi);
+        if (a.family != 55) dragBandEdge(a, 0, plotMin, plotSize, plotLo, plotHi);
         channelWidthButton(a, plotMin, plotSize, kYLabel);
     }
     // right-click: what is this signal?
@@ -341,7 +347,7 @@ void waterfallPlot(App& a, ImVec2 size) {
         if (gBandDragPlot < 0 && gBandHandleHoverPlot != 1) clickToTune(a, 1);
         plt::EndPlot();
     }
-    if (waterfallDrawn) dragBandEdge(a, 1, waterfallMin, waterfallSize, waterfallLo, waterfallHi);
+    if (waterfallDrawn && a.family != 55) dragBandEdge(a, 1, waterfallMin, waterfallSize, waterfallLo, waterfallHi);
 }
 
 void histogramPlot(App& a, ImVec2 size) {
