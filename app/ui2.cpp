@@ -143,7 +143,11 @@ float freqDigits(App& a, float fontSize = 30.f) {
     static char typed[32] = "";
     const bool fm = a.fmMode, dab = a.dabMode;
     const ModeTuning* mt = a.family >= 6 ? modeTuning(a.family + 2) : nullptr;
-    const double lo = mt ? mt->minMhz : fm ? 87.5 : dab ? 174.0 : 1.0, hi = mt ? mt->maxMhz : fm ? 108.0 : dab ? 240.0 : 6000.0;
+    const double recommendedLo = mt ? mt->minMhz : fm ? 87.5 : dab ? 174.0 : 1.0;
+    const double recommendedHi = mt ? mt->maxMhz : fm ? 108.0 : dab ? 240.0 : 6000.0;
+    const DeviceInfo* radio = a.devIdx >= 0 && a.devIdx < (int)a.devices.size() ? &a.devices[a.devIdx] : nullptr;
+    const double lo = a.freeFrequency ? (radio && radio->minFreqHz > 0 ? radio->minFreqHz / 1e6 : 0.001) : recommendedLo;
+    const double hi = a.freeFrequency ? (radio && radio->maxFreqHz > 0 ? radio->maxFreqHz / 1e6 : 6000.0) : recommendedHi;
     long long hz = (long long)std::llround(a.freqMhz * 1e6);
     char buf[16];
     snprintf(buf, sizeof buf, "%010lld", hz);   // ten digits: L-band (DVB-S, ADS-B) is above 1 GHz
@@ -215,7 +219,7 @@ float freqDigits(App& a, float fontSize = 30.f) {
         ImGui::OpenPopup("##freqtype");
     }
     if (ImGui::BeginPopup("##freqtype")) {
-        ImGui::TextDisabled("Frequency in MHz (%.3f to %.3f)", lo, hi);
+        ImGui::TextDisabled("Frequency in MHz (%.3f to %.3f)%s", lo, hi, a.freeFrequency ? " [FREE]" : "");
         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(170 * gUi);
         const bool enter = ImGui::InputText("##ftext", typed, sizeof typed, ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
@@ -574,6 +578,8 @@ float menuBar(App& a) {
             if (ImGui::MenuItem("Scanner (highly experimental)", nullptr, &a.scannerOpen)) {}
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("HIGHLY EXPERIMENTAL: step through a list of frequencies and modes, or a band, and stop on activity");
             ImGui::Separator();
+            if (ImGui::MenuItem("Free frequency (ignore mode limits)", nullptr, &a.freeFrequency)) savePrefs(a);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Use frequencies outside the mode's recommended range. The SDR still enforces its hardware limits.");
             if (ImGui::MenuItem("Classic interface")) { a.newUi = false; savePrefs(a); }
             ImGui::EndMenu();
         }
