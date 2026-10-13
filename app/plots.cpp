@@ -92,6 +92,7 @@ void channelWidthPopup(App& a) {
         if (ImGui::SliderInt("##fmchw", &k, (int)(FmReceiver::kMinChannelWidthHz / 1e3), (int)(FmReceiver::kMaxChannelWidthHz / 1e3), "%d kHz")) a.fmChanKhz = (k + 5) / 10 * 10;
         if (ImGui::IsItemDeactivatedAfterEdit()) savePrefs(a);
         ImGui::EndDisabled();
+        ImGui::Text("FM decoder filter requested: %.0f kHz", a.engine.fm().channelWidth() / 1e3);
         ImGui::TextDisabled("The receiver's channel filter. Narrower keeps a strong neighbour out (150 kHz copes with one 10 dB stronger 150 kHz away); "
                             "below about 180 kHz loud passages distort a little and RDS suffers first.");
     } else if (a.isdbtMode) {
@@ -167,7 +168,13 @@ static void dragBandEdge(App& a, int plotId, ImVec2 origin, ImVec2 size, double 
     const double maxMhz = a.fmMode ? FmReceiver::kMaxChannelWidthHz / 1e6 : (rate > 0 ? rate / 1e6 : span);
     const double minMhz = a.fmMode ? FmReceiver::kMinChannelWidthHz / 1e6 : 0.005;
     gBandDragWidthMhz = std::max(minMhz, std::min(maxMhz, gBandStartWidthMhz + 2.0 * gBandDragSide * dx));
-    ImGui::SetTooltip("RF bandwidth: %s (release to apply)", widthText(gBandDragWidthMhz).c_str());
+    if (a.fmMode) {
+        const int kHz = std::max(100, std::min(300, (int)std::lround(gBandDragWidthMhz * 1000)));
+        a.engine.fm().setChannelWidth(kHz * 1e3);
+        ImGui::SetTooltip("FM decoder filter: %d kHz (live)", kHz);
+    } else {
+        ImGui::SetTooltip("SDR RF bandwidth: %s (apply on release)", widthText(gBandDragWidthMhz).c_str());
+    }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         gBandDragPlot = -1;
         gBandReleaseConsumed = true;
