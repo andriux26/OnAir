@@ -265,6 +265,7 @@ private:
         try { if (dev_) SoapySDR::Device::unmake(dev_); } catch (...) {}
         dev_ = nullptr;
         rfTuneSet_ = false;
+        bandwidthSet_ = false;
         gainSet_ = false;
     }
 
@@ -281,13 +282,21 @@ private:
                 snprintf(b, sizeof b, "this radio only offers %.2f Msps, %.2f Msps were requested for this channel width", rate_ / 1e6, s.sampleRate / 1e6);
                 err = b;   // reported to the user; the receiver may still work for narrower channels
             }
-            // analogue filter: as wide as the signal, within what the radio offers
+        }
+        // The RF front-end filter can change without changing sample rate.
+        // Cache the requested width to avoid unnecessary SpyServer round trips.
+        // Actual hardware filter widths are quantized by the driver's ranges.
+        const double wantBw = s.basebandFilterHz > 0 ? std::min(s.basebandFilterHz, rate_) : rate_ * 0.95;
+        if (!bandwidthSet_ || std::fabs(wantBw - lastBandwidthRequestHz_) >= 1.0) {
             try {
                 const auto bws = dev_->getBandwidthRange(SOAPY_SDR_RX, ch);
                 if (!bws.empty()) {
-                    const double want = s.basebandFilterHz > 0 ? s.basebandFilterHz : rate_ * 0.95;
-                    dev_->setBandwidth(SOAPY_SDR_RX, ch, nearestRate(bws, want));
+                    dev_->setBandwidth(SOAPY_SDR_RX, ch, nearestRate(bws, wantBw));
+                    lastBandwidthRequestHz_ = wantBw;
+                    bandwidthSet_ = true;
                 }
+            } catch (const std::exception& e) {
+                fprintf(stderr, "SoapySDR: front-end bandwidth %.0f Hz not applied: %s\\n", wantBw, e.what());
             } catch (...) {}
         }
         // the driver's own settings the user changed (TuneSettings "soapy.<key>"), before the frequency: some move the tuning (direct sampling)
@@ -390,6 +399,8 @@ private:
     double ppm_ = 0;           // the correction set in the driver
     double lastGainDb_ = 0;
     bool gainSet_ = false;
+    bool bandwidthSet_ = false;
+    double lastBandwidthRequestHz_ = 0;
     bool rfTuneSet_ = false;
     double lastRfTuneHz_ = 0;
     std::map<std::string, std::string> current_;   // "soapy.<key>" -> the value the radio has
