@@ -358,10 +358,13 @@ bool generalDragging(int plotId) { return S.drag >= 0 && S.dragPlot == plotId; }
 
 void generalPlotMouse(App& a, int plotId) {
     load();
-    const bool hov = plt::IsPlotHovered();
-    if (!hov && !(S.drag >= 0 && S.dragPlot == plotId)) return;
     const plt::Rect lim = plt::GetPlotLimits();
     const ImVec2 pp = plt::GetPlotPos(), ps = plt::GetPlotSize();
+    const ImVec2 pos = ImGui::GetIO().MousePos;
+    // The plot has an invisible mouse-capture item. Check the plotted area
+    // geometrically rather than requiring ImGui hover ownership.
+    const bool hov = pos.x >= pp.x && pos.x <= pp.x + ps.x && pos.y >= pp.y && pos.y <= pp.y + ps.y;
+    if (!hov && !(S.drag >= 0 && S.dragPlot == plotId)) return;
     const double span = std::max(1e-9, lim.X.Max - lim.X.Min);
     auto px = [&](double mhz) { return pp.x + (float)((mhz - lim.X.Min) / span * ps.x); };
     const double mhz = plt::GetPlotMousePos().x, mx = ImGui::GetIO().MousePos.x;
@@ -372,7 +375,7 @@ void generalPlotMouse(App& a, int plotId) {
     // which edges can be held: both for the symmetric filters, only the outer one for USB / LSB (the inner sits 300 Hz from the dial)
     const bool canLo = S.demod != dect2::GenUsb, canHi = S.demod != dect2::GenLsb;
     int edgeNear = -1;
-    const float grab = 5 * gUi;
+    const float grab = 12 * gUi;  // usable with narrow AM/SSB/CW channels even when zoomed out
     if (canLo && std::fabs(mx - px(el)) < grab) edgeNear = 0;
     if (canHi && std::fabs(mx - px(eh)) < grab && (edgeNear < 0 || std::fabs(mx - px(eh)) < std::fabs(mx - px(el)))) edgeNear = 1;
     if (S.drag >= 0 && S.dragPlot == plotId) {
@@ -391,7 +394,7 @@ void generalPlotMouse(App& a, int plotId) {
     if (!hov) return;
     if (edgeNear >= 0) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-        if (ImGui::IsMouseClicked(0)) { S.drag = edgeNear; S.dragPlot = plotId; return; }
+        if (ImGui::IsMouseClicked(0)) { S.drag = edgeNear; S.dragPlot = plotId; S.dragged = false; return; }
         ImGui::SetTooltip("drag to change the filter (%.4g kHz)", S.width[S.demod] / 1e3);
         return;
     }
