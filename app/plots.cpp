@@ -1,11 +1,12 @@
 // spectrum, waterfall, histogram and constellation plots
 #include "app.h"
 
+static int gBandDragPlot = -1;
 // Click on the spectrum or the waterfall to tune to that frequency (a drag still pans). The grid follows the mode: FM 0.1 MHz, DMR 12.5 kHz, else 1 kHz.
 static void clickToTune(App& a, int plotId) {
     if (a.family == 55) { generalPlotMouse(a, plotId); return; }   // the general receiver: its channel marker, without retuning the radio
     if (!plt::IsPlotHovered() || a.fmScan.running) return;
-    if (a.manualRfBandwidthHz > 0 && ImGui::IsMouseDragging(0)) return;
+    if (gBandDragPlot >= 0) return;
     double mhz = plt::GetPlotMousePos().x;
     double lo = 0.1, hi = 6000;
     double grid = 0.001;
@@ -48,7 +49,7 @@ ChanWidth channelWidth(const App& a) {
     else if (a.family == 55) w.mhz = generalChannelWidthMhz(a);
     else if (const ModeTuning* mt = modeTuning(a.family + 2)) w.mhz = mt->bandwidthMhz;
     // An explicitly dragged RF passband is drawn irrespective of mode presets.
-    if (a.manualRfBandwidthHz > 0 && a.family != 55) {
+    if (a.manualRfBandwidthHz > 0) {
         w.mhz = a.manualRfBandwidthHz / 1e6;
         w.manual = w.settable = true;
     }
@@ -120,13 +121,12 @@ void channelWidthPopup(App& a) {
 // then issue ONE driver retune when released (SpyServer may be on a slow network).
 // Band stays centred on the tuned frequency. This changes the radio front-end
 // filter request, not the protocol's fixed symbol rate or decoder filter.
-static int gBandDragPlot = -1;
 static double gBandDragWidthMhz = 0;
 static int gBandDragSide = 0;
 static float gBandStartMouseX = 0;
 static double gBandStartWidthMhz = 0;
 static void dragBandEdge(App& a, int plotId) {
-    if (a.family == 55 || a.fmScan.running || a.devices.empty()) return;
+    if (a.fmScan.running || a.devices.empty()) return;
     const ChanWidth cw = channelWidth(a);
     if (cw.mhz <= 0) return;
     const plt::Rect lim = plt::GetPlotLimits();
@@ -175,7 +175,7 @@ static void dragBandEdge(App& a, int plotId) {
 
 // The channel band behind the trace (spectrum: a light fill and its edges) or on top of the picture (waterfall: the edges only)
 static void channelBand(const App& a, bool fill) {
-    if (a.family == 55) { generalChannelBand(a, fill); return; }
+    if (a.family == 55 && a.manualRfBandwidthHz <= 0 && gBandDragPlot < 0) { generalChannelBand(a, fill); return; }
     const ChanWidth cw = channelWidth(a);
     if (cw.mhz <= 0) return;
     const double shownWidth = gBandDragPlot >= 0 ? gBandDragWidthMhz : cw.mhz;
