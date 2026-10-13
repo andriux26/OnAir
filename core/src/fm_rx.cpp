@@ -408,7 +408,10 @@ struct FmReceiver::Impl {
         if (!silent && !audio) { audio = std::make_unique<AudioOut>(); audio->start(kAudioRate); audio->setStartThreshold(kAudioRate / 5); applyAudio(); }
     }
 
-    // the channel filter, passing +-pass Hz; the last stage is down by pass + 80 kHz (190 kHz for the standard 110)
+    // The final anti-alias filter also defines the FM channel passband.
+    // A fixed 80 kHz transition used to leave substantial energy outside
+    // narrow manually selected passbands. Tighten it for smaller widths;
+    // keep the original gentler transition for normal 220 kHz broadcast FM.
     void designChan(double pass) {
         chanPass = pass;
         chan.assign(chanStages.size(), DecimFir<cf32>());
@@ -416,7 +419,9 @@ struct FmReceiver::Impl {
         for (size_t i = 0; i < chanStages.size(); i++) {
             const double out = r / chanStages[i];
             const bool last = i + 1 == chanStages.size();
-            chan[i].design(designLowpass(pass, last ? pass + (kChanStop - kChanPass) : out - pass, r), chanStages[i]);
+            const double transition = pass < kChanPass ? 20e3 : (kChanStop - kChanPass);
+            const double stop = last ? std::min(out * 0.49, pass + transition) : out - pass;
+            chan[i].design(designLowpass(pass, stop, r), chanStages[i]);
             r = out;
         }
     }
