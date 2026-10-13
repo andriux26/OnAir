@@ -132,18 +132,24 @@ static void dragBandEdge(App& a, int plotId) {
     const plt::Rect lim = plt::GetPlotLimits();
     const ImVec2 origin = plt::GetPlotPos(), size = plt::GetPlotSize();
     const double span = lim.X.Max - lim.X.Min;
-    if (span <= 0 || size.x <= 0) return;
+    if (!(span > 0) || size.x <= 0) return;
     const auto pixel = [&](double mhz) { return origin.x + float((mhz - lim.X.Min) / span * size.x); };
-    const float left = pixel(a.freqMhz - cw.mhz / 2), right = pixel(a.freqMhz + cw.mhz / 2);
+    const float centreX = pixel(a.freqMhz);
+    const float half = float(cw.mhz / span * size.x * 0.5);
     const float mx = ImGui::GetIO().MousePos.x;
-    const bool hover = plt::IsPlotHovered();
-    const bool nearLeft = std::fabs(mx - left) <= 9 * gUi;
-    const bool nearRight = std::fabs(mx - right) <= 9 * gUi;
-    if (gBandDragPlot == -1 && hover && (nearLeft || nearRight)) {
+    const float my = ImGui::GetIO().MousePos.y;
+    const bool inside = mx >= origin.x && mx <= origin.x + size.x && my >= origin.y && my <= origin.y + size.y;
+    // Narrow modes (DMR 12.5 kHz on a 2.4 Msps display) can have
+    // sub-pixel edges. Give the handles a practical hit target and
+    // choose the closest side even when both hit zones overlap.
+    const float hit = 12 * gUi;
+    const bool nearLeft = std::fabs(mx - (centreX - half)) <= hit;
+    const bool nearRight = std::fabs(mx - (centreX + half)) <= hit;
+    if (gBandDragPlot == -1 && inside && (nearLeft || nearRight)) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-        if (ImGui::IsMouseClicked(0)) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
             gBandDragPlot = plotId;
-            gBandDragSide = nearLeft ? -1 : 1;
+            gBandDragSide = (!nearRight || (nearLeft && mx < centreX)) ? -1 : 1;
             gBandStartMouseX = mx;
             gBandStartWidthMhz = cw.mhz;
             gBandDragWidthMhz = cw.mhz;
@@ -155,7 +161,8 @@ static void dragBandEdge(App& a, int plotId) {
     const double rate = a.engine.running() ? a.engine.sampleRate() : a.tune.sampleRate;
     const double maxMhz = rate > 0 ? rate / 1e6 : span;
     gBandDragWidthMhz = std::max(0.005, std::min(maxMhz, gBandStartWidthMhz + 2 * gBandDragSide * dx));
-    if (ImGui::IsMouseReleased(0)) {
+    ImGui::SetTooltip("RF bandwidth: %s (release to apply)", widthText(gBandDragWidthMhz).c_str());
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         gBandDragPlot = -1;
         if (std::fabs(gBandDragWidthMhz - gBandStartWidthMhz) > 1e-6) {
             a.manualRfBandwidthHz = gBandDragWidthMhz * 1e6;
