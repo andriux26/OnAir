@@ -141,7 +141,8 @@ float freqDigits(App& a, float fontSize = 30.f) {
     static char typed[32] = "";
     const bool fm = a.fmMode, dab = a.dabMode;
     const ModeTuning* mt = a.family >= 6 ? modeTuning(a.family + 2) : nullptr;
-    const double lo = mt ? mt->minMhz : 0.001, hi = dect2::kMaxTuneMhz;
+    const double lo = a.family == 55 ? 0.1 : mt ? mt->minMhz : 0.001;
+    const double hi = a.family == 55 ? 3000.0 : dect2::kMaxTuneMhz;
     long long hz = (long long)std::llround(a.freqMhz * 1e6);
     constexpr int kD = 13;   // thirteen digits: up to 1000 GHz (10^12 Hz)
     char buf[24];

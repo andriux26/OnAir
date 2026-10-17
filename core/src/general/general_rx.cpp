@@ -820,8 +820,8 @@ std::string generalSummary(const GeneralTelemetry& t) {
 
 ModeTuning generalTuning() {
     ModeTuning t;
-    t.stdMode = 57; t.id = "general"; t.name = "General receiver";
-    t.minMhz = 1; t.maxMhz = 6000; t.defMhz = 145.500;
+    t.stdMode = 57; t.id = "general"; t.name = "Free MHz";
+    t.minMhz = 0.1; t.maxMhz = 3000; t.defMhz = 145.500;
     t.sampleRate = 2000000;
     t.basebandHz = 1750000;
     t.bandwidthMhz = 1.6;
