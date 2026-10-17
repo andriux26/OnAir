@@ -108,7 +108,7 @@ void edges(double& lo, double& hi) { dect2::generalFilterEdges(S.demod, S.width[
 
 // Put the channel on hz: inside the band the radio covers it only moves the marker; outside, the radio is retuned onto it
 void setListen(App& a, double hz) {
-    hz = std::max(1e3, hz);
+    hz = std::clamp(hz, 100000.0, 3000000000.0);
     const double fs = a.engine.sampleRate() > 0 ? a.engine.sampleRate() : a.tune.sampleRate;
     const double rc = radioCenterMhz(a) * 1e6;
     double lo, hi;
@@ -194,6 +194,20 @@ void controls(App& a) {
     ImGui::Text("%.4f MHz", listenHz(a) / 1e6);
     ImGui::PopFont();
     tip("The frequency listened to: the dial plus where the channel marker sits.\nClick the spectrum or the waterfall to move it; drag the edges of the light band to change the filter.");
+    ImGui::SameLine(0, 8 * gUi);
+    static char freeMhzEntry[32] = "";
+    ImGui::SetNextItemWidth(115 * gUi);
+    if (ImGui::InputTextWithHint("##freemhzentry", "MHz: 0.1 - 3000", freeMhzEntry, sizeof freeMhzEntry, ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue)) {
+        char* end = nullptr;
+        const double v = std::strtod(freeMhzEntry, &end);
+        if (end != freeMhzEntry && *end == 0 && std::isfinite(v) && v >= 0.1 && v <= 3000.0) {
+            S.chanOff = 0;
+            tuneFreq(a, v);
+            S.lastDial = a.freqMhz;
+            save();
+        }
+    }
+    tip("Enter any listening frequency from 0.1 to 3000 MHz; the SDR must support that frequency.");
     flowNext(10 * gUi);
     if (freqStepArrow("##gdn", ImGuiDir_Left)) setListen(a, snap(listenHz(a)) - stepHz());
     tip("Down one step. Hold for a continuous change.");
