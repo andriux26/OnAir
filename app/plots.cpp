@@ -516,8 +516,17 @@ static void fineTuneKeys(App& a) {
     if (!dir) return;
     double lo = 0.001, hi = dect2::kMaxTuneMhz;
     if (a.family >= 6) if (const ModeTuning* mt = modeTuning(a.family + 2)) { lo = mt->minMhz; hi = mt->maxMhz; }
-    const double target = std::clamp(a.freqMhz + dir * stepMhz, lo, hi);
-    if (std::fabs(target - a.freqMhz) > 0.0000005) spectrumTune(a, target);
+    // spectrumTune expects the absolute signal frequency, while a.freqMhz is
+    // the SDR dial frequency. Modes such as NXDN use a non-zero tuneOffsetHz.
+    // Without compensating here, every key press subtracts that offset again,
+    // making both arrow keys appear to tune in the same direction.
+    const ModeTuning* mt = a.family >= 6 ? modeTuning(a.family + 2) : nullptr;
+    const bool fileSource = a.devIdx >= 0 && a.devIdx < (int)a.devices.size() &&
+        (a.devices[a.devIdx].kind == DeviceInfo::File || a.devices[a.devIdx].isAudio());
+    const double offsetMhz = mt && !fileSource ? mt->tuneOffsetHz / 1e6 : 0.0;
+    const double actualMhz = a.freqMhz + offsetMhz;
+    const double target = std::clamp(actualMhz + dir * stepMhz, lo, hi);
+    if (std::fabs(target - actualMhz) > 0.0000005) spectrumTune(a, target);
 }
 
 // Ctrl+PageUp / Ctrl+PageDown: the view steps up or down in frequency by its own width
