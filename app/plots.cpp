@@ -2,24 +2,23 @@
 #include "app.h"
 #include "dect2/specan_dsp.h"
 
-// Click on the spectrum or the waterfall to tune to that frequency (a drag still pans). The grid follows the mode: FM 0.1 MHz, DMR 12.5 kHz, else 1 kHz.
+// Tune to the exact frequency under the mouse (a drag still pans). Do not snap to
+// channel grids: the user must be able to center even an off-raster signal.
 static void clickToTune(App& a, int plotId) {
     if (a.family == 55) { generalPlotMouse(a, plotId); return; }   // the general receiver: its channel marker, without retuning the radio
     if (!plt::IsPlotHovered() || a.fmScan.running) return;
     double mhz = plt::GetPlotMousePos().x;
     double lo = 0.001, hi = dect2::kMaxTuneMhz;
-    double grid = 0.001;
-    if (a.fmMode) grid = 0.1;
-    else if (a.family == 9) grid = 0.0125;
+    // Mode-specific ranges still protect modes that require particular bands.
     if (a.family >= 6) if (const ModeTuning* mt = modeTuning(a.family + 2)) { lo = mt->minMhz; hi = mt->maxMhz; }
-    mhz = std::round(std::min(hi, std::max(lo, mhz)) / grid) * grid;
+    mhz = std::min(hi, std::max(lo, mhz));
     if (a.family == 4 || a.family == 1 || a.family == 3) return;   // ATSC and ISDB-T channels sit on a fixed raster: use the frequency field
     const ImVec2 d = ImGui::GetMouseDragDelta(0, 0);
     if (ImGui::IsMouseReleased(0) && std::fabs(d.x) < 4 && std::fabs(d.y) < 4 && std::fabs(mhz - a.freqMhz) > 1e-6) {
         spectrumTune(a, mhz);
         return;
     }
-    if (std::fabs(mhz - a.freqMhz) > 1e-6) {
+    if (std::fabs(mhz - a.freqMhz) > 0.0000005) {
         const plt::Rect lim = plt::GetPlotLimits();   // a red line where a click would tune to
         if (!ImGui::IsMouseDown(0)) {   // the ghost of the channel box: where it will sit after the click, so the whole signal can be put inside it
             const ChanWidth cw = channelWidth(a);
@@ -30,7 +29,7 @@ static void clickToTune(App& a, int plotId) {
                 plt::Spec es; es.LineColor = ImVec4(0.8f, 0.8f, 0.8f, 0.45f); es.LineWeight = 1.f;
                 plt::PlotInfLines("##ghostedges", ge, 2, es);
                 if (plotId == 0) {
-                    char lb[48]; snprintf(lb, sizeof lb, "%.4f MHz  (%s)", mhz, widthText(cw.mhz).c_str());
+                    char lb[48]; snprintf(lb, sizeof lb, "%.6f MHz  (%s)", mhz, widthText(cw.mhz).c_str());
                     plt::PlotText(lb, mhz, lim.Y.Max, ImVec2(0, bandPlanStripHeight() + 4 * gUi));
                 }
             }
@@ -38,8 +37,8 @@ static void clickToTune(App& a, int plotId) {
         const double lx[2] = {mhz, mhz}, ly[2] = {lim.Y.Min, lim.Y.Max};
         plt::Spec ls; ls.LineColor = ImVec4(0.95f, 0.25f, 0.25f, 0.9f); ls.LineWeight = 1.2f;
         plt::PlotLine("##tunehere", lx, ly, 2, ls);
-        if (a.tuningMode == 1) ImGui::SetTooltip(tr("click to decode %.4f MHz (radio centre stays)"), mhz);
-        else ImGui::SetTooltip(tr("click to tune to %.4f MHz"), mhz);
+        if (a.tuningMode == 1) ImGui::SetTooltip(tr("click to decode %.6f MHz (radio centre stays)"), mhz);
+        else ImGui::SetTooltip(tr("click to tune to %.6f MHz"), mhz);
     }
 }
 
@@ -506,6 +505,30 @@ bool specDbRangeKeys(App& a) {
     return true;
 }
 
+// Alt+Left / Alt+Right: exact fine tuning on every receiver mode.
+// Shift makes the step 1 kHz instead of 100 Hz; do not steal keys from text input.
+static void fineTuneKeys(App& a) {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (!io.KeyAlt || io.KeyCtrl || io.WantTextInput || a.fmScan.running) return;
+    const double stepMhz = io.KeyShift ? 0.001 : 0.0001;
+    const int dir = (ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : 0)
+                  - (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, true) ? 1 : 0);
+    if (!dir) return;
+    double lo = 0.001, hi = dect2::kMaxTuneMhz;
+    if (a.family >= 6) if (const ModeTuning* mt = modeTuning(a.family + 2)) { lo = mt->minMhz; hi = mt->maxMhz; }
+    // spectrumTune expects the absolute signal frequency, while a.freqMhz is
+    // the SDR dial frequency. Modes such as NXDN use a non-zero tuneOffsetHz.
+    // Without compensating here, every key press subtracts that offset again,
+    // making both arrow keys appear to tune in the same direction.
+    const ModeTuning* mt = a.family >= 6 ? modeTuning(a.family + 2) : nullptr;
+    const bool fileSource = a.devIdx >= 0 && a.devIdx < (int)a.devices.size() &&
+        (a.devices[a.devIdx].kind == DeviceInfo::File || a.devices[a.devIdx].isAudio());
+    const double offsetMhz = mt && !fileSource ? mt->tuneOffsetHz / 1e6 : 0.0;
+    const double actualMhz = a.freqMhz + offsetMhz;
+    const double target = std::clamp(actualMhz + dir * stepMhz, lo, hi);
+    if (std::fabs(target - actualMhz) > 0.0000005) spectrumTune(a, target);
+}
+
 // Ctrl+PageUp / Ctrl+PageDown: the view steps up or down in frequency by its own width
 static void freqPageKeys() {
     ImGuiIO& io = ImGui::GetIO();
@@ -953,6 +976,7 @@ void spectrumWaterfall(App& a, float& frac, bool drag) {
         ImGui::SetCursorScreenPos(p);
     }
     freqPageKeys();
+    fineTuneKeys(a);
     specFreqZoomBeforePlots(a);
     {   // the ranges are kept when the mouse has let go of them (a drag or a wheel zoom changes them all the time)
         static float sMin = 1e9f, sMax = 1e9f, wMin = 1e9f, wMax = 1e9f; static double sT = 0;
