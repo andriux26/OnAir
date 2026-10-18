@@ -936,8 +936,7 @@ void tuneDecode(App& a, double absMhz) {
 
 void spectrumTune(App& a, double absMhz) {
     if (a.tuningMode == 1) {
-        if (a.fmMode) { a.freqMhz = std::round(std::max(0.0, dialMhzFromAbs(a, absMhz)) * 10.0) / 10.0; tuneDecode(a, absMhz); }
-        else tuneDecode(a, absMhz);
+        tuneDecode(a, absMhz);  // preserve the exact channel frequency in every mode, including FM
     } else if (a.fmMode) tuneFreq(a, absMhz);  // precise spectrum/fine tuning; FM station buttons retain their 100 kHz raster
     else tuneFreq(a, dialMhzFromAbs(a, absMhz));
 }
